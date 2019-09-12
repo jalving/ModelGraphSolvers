@@ -39,7 +39,7 @@ mutable struct DDModel
     b_eq::Vector{Float64}                                       #link equality right hand side
     b_ineq::Vector{Float64}                                     #link inequality right hand side
 
-    link_eq_variables::Vector{JuMP.VariableRef}                #Vector of JuMP variables corresponding to link equality constraints
+    link_eq_variables::Vector{JuMP.VariableRef}                 #Vector of JuMP variables corresponding to link equality constraints
     link_ineq_variables::Vector{JuMP.VariableRef}               #Vector of JuMP variables corresponding to link inequality constraints
 
     current_lower_bound::Float64
@@ -80,17 +80,22 @@ function DDModel(graph::ModelGraph) #args,kwargs
 
     #Check graph for link constraints and link variables.  Does not support subgraphs.
     #supports linkconstraints
-    #suppoerts linkvariables
+    #supports linkvariables
     #does not support: subgraphs
 
     #Fill in all the data we need to do dual decomposition
     dd_model = DDModel()
 
     #get data from graph
-    dd_model.subproblems = [getmodel(node) for node in getnodes(graph)]
+    if numvariables(graph.mastermodel) > 0
+        dd_model.subproblems = [graph.mastermodel;[getmodel(node) for node in getnodes(graph)]] #if master is not empty
+    else
+        dd_model.subproblems = [getmodel(node) for node in getnodes(graph)]
+    end
+
     link_eq_constraints = get_link_eq_constraints(graph)         #link equality constraints in graph
     link_ineq_constraints = get_link_ineq_constraints(graph)     #link inequality constraints in graph
-    #link_variables = get_link_variables(graph)
+    link_variables = collect(values(graph.linkvariables)) #getlinkvariables(graph)  #link variables
 
     #Setup objective and multiplier list for each sub-problem
     for node in dd_model.subproblems
@@ -100,6 +105,10 @@ function DDModel(graph::ModelGraph) #args,kwargs
     #Setup data structures
     link_eq_matrix,b_eq,link_eq_variables,link_eq_map = prepare_link_matrix(link_eq_constraints)
     link_ineq_matrix,b_ineq,link_ineq_variables,link_ineq_map = prepare_link_matrix(link_ineq_constraints)
+
+    #TODO
+    link_var_matrix,b_eq,link_eq_variables,link_eq_map = prepare_link_matrix(graph,link_variables)
+
 
     dd_model.link_eq_matrix = link_eq_matrix
     dd_model.b_eq = b_eq
