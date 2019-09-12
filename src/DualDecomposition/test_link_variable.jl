@@ -2,6 +2,8 @@ using Revise
 using JuMP
 using GLPK
 using ModelGraphs
+
+include("DualDecompositionSolver.jl")
 using .DualDecompositionSolver
 
 const DDSolver = DualDecompositionSolver

@@ -20,7 +20,6 @@ function get_link_ineq_constraints(graph::ModelGraph)
 end
 
 function prepare_link_matrix(link_constraints::Vector{LinkConstraint})
-    #link_constraints = graph.linkmodel.linkconstraints #index => constraint
     link_map = Dict()
     link_vars = []
     n_link_vars = 0
@@ -37,16 +36,60 @@ function prepare_link_matrix(link_constraints::Vector{LinkConstraint})
     return A,b,link_vars,link_map
 end
 
+function prepare_link_matrix(link_variables::Vector{LinkVariableRef})
+    link_map = Dict()
+    link_vars = []
+    n_link_vars = 0
+    I = Int64[]
+    J = Int64[]
+    V = Float64[]
+    b = Float64[]
+    i = 0
+    for link_var in link_variables  #Just enumerate here
+        i += 1 #row
+        _unpack_constraint!(link_var,i,I,J,V,link_vars,link_map)
+    end
+    A = sparse(I,J,V)
+    return A,link_vars,link_map #b is always zero
+end
+
+function _unpack_constraint!(linkvariable::LinkVariableRef,row::Integer,I::Vector,J::Vector,V::Vector,link_vars::Vector,link_map::Dict)
+    #Add entry for master variable (link variable)
+    master_var = linkvariable.vref                                  #the actual master JuMP variable
+    push!(link_vars,master_var)
+    coeff = 1
+    j = length(link_vars)
+    push!(I,row)
+    push!(J,j)
+    push!(V,coeff)
+
+    child_vars = linkvariable.graph.linkvariablemap[linkvariable]   #the children variables
+    for var in child_vars
+        if !(var in link_vars)
+            j = length(link_vars) + 1
+            link_map[var] = j       #link index of variable var
+            push!(link_vars,var)
+        else
+            j = link_map[var]       #look up the variable index since it was already added to the matrix
+        end
+        coeff = -1
+        push!(I,row)
+        push!(J,j)
+        push!(V,coeff)
+    end
+end
+
+
 function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Float64,JuMP.VariableRef},MOI.EqualTo{Float64}},row::Integer,I::Vector,J::Vector,V::Vector,b::Vector,link_vars::Vector,link_map::Dict)
     push!(b,constraint.set.value)
     for (var,coeff) in constraint.func.terms
-        #find a new link variable
+        #check for new link constraint variables
         if !(var in link_vars)
             j = length(link_vars) + 1
             link_map[var] = j   #link index of variable var
             push!(link_vars,var)
         else
-            #get correct variable index
+            #look up the variable index since it was already added to the matrix
             j = link_map[var]
         end
         push!(I,row)
@@ -91,69 +134,5 @@ function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Floa
         push!(V,-1*coeff)
     end
 end
-#TODO: Interval
 
-# function prepare_link_ineq_matrix(graph::ModelGraph)
-#     #link_constraints = graph.linkmodel.linkconstraints #index => constraint
-#     link_map = Dict()
-#     link_vars = []
-#     n_link_vars = 0
-#     I = Int64[]
-#     J = Int64[]
-#     V = Float64[]
-#     b = Float64[]
-#     i = 0
-#     for link_con in getlinkconstraints(graph)
-#         #If it's an equality constraint
-#
-#         if isa(link_con.set,MOI.LessThan)  #Good to go
-#             i += 1
-#
-#             push!(b,link_con.set.upper)
-#             #Don't need to modify coefficients
-#             for (var,coeff) in link_con.func.terms
-#                 #find a new link variable
-#                 if !(var in keys(link_vars))
-#                     n_link_vars += 1
-#                     j = n_link_vars
-#                     link_map[var] = j   #link index of variable var
-#                     push!(link_vars,var)
-#                 else
-#                     #get correct variable index
-#                     j = link_vars[var]
-#                 end
-#
-#                 push!(I,i)
-#                 push!(J,j)
-#                 push!(V,coeff)
-#             end
-#
-#         elseif isa(link_con.set,MOI.GreaterThan)
-#             i += 1
-#             push!(b,-1*link_con.set.lower)
-#             #Don't need to modify coefficients
-#             for (var,coeff) in link_con.func.terms
-#                 #find a new link variable
-#                 if !(var in keys(link_vars))
-#                     n_link_vars += 1
-#                     j = n_link_vars
-#                     link_map[var] = j   #link index of variable var
-#                     push!(link_vars,var)
-#                 else
-#                     #get correct variable index
-#                     j = link_vars[var]
-#                 end
-#
-#                 push!(I,i)
-#                 push!(J,j)
-#                 push!(V,-1*coeff)
-#             end
-#
-#         elseif isa(link_con.set,MOI.Interval)
-#             error("Lagrange Solver does not yet support Interval constraints")
-#         end
-#     end
-#
-#     Pi = sparse(I,J,V)
-#     return Pi,link_vars,b
-# end
+#TODO: Interval Constraints

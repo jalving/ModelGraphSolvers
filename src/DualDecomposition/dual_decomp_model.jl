@@ -78,16 +78,22 @@ end
 #Populate a DDModel using a ModelGraph
 function DDModel(graph::ModelGraph) #args,kwargs
 
-    #Check graph for link constraints and link variables.  Does not support subgraphs.
-    #supports linkconstraints
-    #supports linkvariables
-    #does not support: subgraphs
+    #DDMODEL SUPPORTS
+    #supports: linkconstraints
+    #supports: linkvariables
+    #does not support: subgraphs (need to aggregate)
+    #does not support: interval constraints
+
+    #TODO Automatically aggregate subgraphs
+    if has_subgraphs(graph)
+        error("Dual Decomposition Solver does not support subgraphs.  run aggregate_subgraphs(graph) first" )
+    end
 
     #Fill in all the data we need to do dual decomposition
     dd_model = DDModel()
 
     #get data from graph
-    if numvariables(graph.mastermodel) > 0
+    if numvariables(graph.mastermodel) > 0 #If there is a master model, make it one of the nodes
         dd_model.subproblems = [graph.mastermodel;[getmodel(node) for node in getnodes(graph)]] #if master is not empty
     else
         dd_model.subproblems = [getmodel(node) for node in getnodes(graph)]
@@ -95,20 +101,20 @@ function DDModel(graph::ModelGraph) #args,kwargs
 
     link_eq_constraints = get_link_eq_constraints(graph)         #link equality constraints in graph
     link_ineq_constraints = get_link_ineq_constraints(graph)     #link inequality constraints in graph
-    link_variables = collect(values(graph.linkvariables)) #getlinkvariables(graph)  #link variables
+    link_variables = getlinkvariables(graph)                     #link variables
 
     #Setup objective and multiplier list for each sub-problem
     for node in dd_model.subproblems
-        prepare_subproblem!(node)
+        prepare_subproblem!(node)                                #add some dictionary entries to each model
     end
 
     #Setup data structures
     link_eq_matrix,b_eq,link_eq_variables,link_eq_map = prepare_link_matrix(link_eq_constraints)
     link_ineq_matrix,b_ineq,link_ineq_variables,link_ineq_map = prepare_link_matrix(link_ineq_constraints)
 
-    #TODO
-    link_var_matrix,b_eq,link_eq_variables,link_eq_map = prepare_link_matrix(graph,link_variables)
-
+    #TODO nonanticpitivity constraints
+    link_var_matrix,link_eq_variables,link_eq_map = prepare_link_matrix(link_variables) #H matrix
+    #Then add link_var_matrix to link_eq_matrix
 
     dd_model.link_eq_matrix = link_eq_matrix
     dd_model.b_eq = b_eq
@@ -119,7 +125,6 @@ function DDModel(graph::ModelGraph) #args,kwargs
     dd_model.link_ineq_variables = link_ineq_variables
 
     #Setup multipliers
-
     dd_model.equality_multipliers = zeros(size(link_eq_matrix,1))
     dd_model.inequality_multipliers = zeros(size(link_ineq_matrix,1))
 
@@ -128,6 +133,9 @@ function DDModel(graph::ModelGraph) #args,kwargs
     #Setup subproblem multiplier vectors
     _prepare_eq_multiplier_map!(link_eq_matrix,link_eq_variables)
     _prepare_ineq_multiplier_map!(link_ineq_matrix,link_ineq_variables)
+
+    #_prepare_var_multiplier_map!(link_var_matrix,link_variables)
+
     return dd_model
 end
 
@@ -171,8 +179,6 @@ function optimize!(dd_model::DDModel)
 
         # Update residuals for multplier calculation
         dd_model.residuals_equality = A_eq*x_eq - dd_model.b_eq
-
-        #println(residuals_equality)
         dd_model.residuals_inequality = A_ineq*x_ineq - dd_model.b_ineq
 
         # Check convergence
