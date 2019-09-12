@@ -1,5 +1,3 @@
-abstract type AbstractDDModel end
-
 mutable struct DDSolverData
     max_iterations::Int64
     epsilon::Float64
@@ -21,7 +19,7 @@ mutable struct DDSolverData
 end
 
 #IDEA: Create a DDModel using ModelGraph information
-mutable struct DDModel <: AbstractDDModel
+mutable struct DDModel
     solver_data::DDSolverData   #solver inputs
     solution::DDSolution        #solution data
 
@@ -54,7 +52,7 @@ end
 # NOTE: We can lift shared variables into equality constraints
 # shared_variables::Dict{JuMP.AbstractJuMPScalar,JuMP.AbstractJuMPScalar} #these get dualized into simple linkconstraints
 # shared_variable_multipliers::Vector{Float64}
-#lagrange_model.shared_variables = getsharedvariables(graph)  #dictionary
+#dd_model.shared_variables = getsharedvariables(graph)  #dictionary
 
 DDModel() = DDModel(DDSolverData(),DDSolution(),subgradient!,nothing,nothing,
                                 Vector{JuMP.Model}(),
@@ -67,25 +65,35 @@ DDModel() = DDModel(DDSolverData(),DDSolution(),subgradient!,nothing,nothing,
 function dual_decomposition_solve(graph::ModelGraph,args...;kwargs...)
 
     #NOTE: figure out which args to pass
-    lagrange_model = DDModel(graph)  #DD model with data
+    dd_model = DualDecompositionModel(graph)
 
-    status = solve(lagrange_model)
+    status = solve(dd_model)
 
     return status
 end
 
+function dual_decomposition_pmap_solve(graph::ModelGraph,workers,args...;kwargs...)
+end
+
 #Populate a DDModel using a ModelGraph
 function DDModel(graph::ModelGraph) #args,kwargs
+
+    #Check graph for link constraints and link variables.  Does not support subgraphs.
+    #supports linkconstraints
+    #suppoerts linkvariables
+    #does not support: subgraphs
+
     #Fill in all the data we need to do dual decomposition
-    lagrange_model = DDModel()
+    dd_model = DDModel()
 
     #get data from graph
-    lagrange_model.subproblems = [getmodel(node) for node in getnodes(graph)]
+    dd_model.subproblems = [getmodel(node) for node in getnodes(graph)]
     link_eq_constraints = get_link_eq_constraints(graph)         #link equality constraints in graph
     link_ineq_constraints = get_link_ineq_constraints(graph)     #link inequality constraints in graph
+    #link_variables = get_link_variables(graph)
 
     #Setup objective and multiplier list for each sub-problem
-    for node in lagrange_model.subproblems
+    for node in dd_model.subproblems
         prepare_subproblem!(node)
     end
 
@@ -93,46 +101,47 @@ function DDModel(graph::ModelGraph) #args,kwargs
     link_eq_matrix,b_eq,link_eq_variables,link_eq_map = prepare_link_matrix(link_eq_constraints)
     link_ineq_matrix,b_ineq,link_ineq_variables,link_ineq_map = prepare_link_matrix(link_ineq_constraints)
 
-    lagrange_model.link_eq_matrix = link_eq_matrix
-    lagrange_model.b_eq = b_eq
-    lagrange_model.link_eq_variables = link_eq_variables
+    dd_model.link_eq_matrix = link_eq_matrix
+    dd_model.b_eq = b_eq
+    dd_model.link_eq_variables = link_eq_variables
 
-    lagrange_model.link_ineq_matrix = link_ineq_matrix
-    lagrange_model.b_ineq = b_ineq
-    lagrange_model.link_ineq_variables = link_ineq_variables
+    dd_model.link_ineq_matrix = link_ineq_matrix
+    dd_model.b_ineq = b_ineq
+    dd_model.link_ineq_variables = link_ineq_variables
 
     #Setup multipliers
-    lagrange_model.equality_multipliers = zeros(size(link_eq_matrix,1))
-    lagrange_model.inequality_multipliers = zeros(size(link_ineq_matrix,1))
+
+    dd_model.equality_multipliers = zeros(size(link_eq_matrix,1))
+    dd_model.inequality_multipliers = zeros(size(link_ineq_matrix,1))
 
     #TODO: Do the Multiplier warm start here?
 
     #Setup subproblem multiplier vectors
     _prepare_eq_multiplier_map!(link_eq_matrix,link_eq_variables)
     _prepare_ineq_multiplier_map!(link_ineq_matrix,link_ineq_variables)
-    return lagrange_model
+    return dd_model
 end
 
 #Solve a DD Model using dual decomposition or ADMM
-function solve(lmodel::DDModel)
+function optimize!(dd_model::DDModel)
 
-    Zk_old = lmodel.current_lower_bound
-    max_iterations = lmodel.solver_data.max_iterations
-    epsilon = lmodel.solver_data.epsilon
-    delta = lmodel.solver_data.delta
+    Zk_old = dd_model.current_lower_bound
+    max_iterations = dd_model.solver_data.max_iterations
+    epsilon = dd_model.solver_data.epsilon
+    delta = dd_model.solver_data.delta
 
     no_improvement = 0
     for iter in 1:max_iterations
-        println(iter)
+        println("Iteration: ",iter)
         # Solve subproblems
         Zk = 0  #objective value
-        for subproblem in lmodel.subproblems
-           Zkn = solve_lagrange_subproblem!(lmodel,subproblem)
-           Zk += Zkn                                      # add objective values
+        for subproblem in dd_model.subproblems
+           Zkn = solve_lagrange_subproblem!(dd_model,subproblem)
+           Zk += Zkn                       # add objective values
         end
         #steptaken = true
 
-        lmodel.current_lower_bound = Zk  #Update lower bound
+        dd_model.current_lower_bound = Zk  #Update lower bound
         # If no improvement in the lowerbound, increase the no improvement counter
         if Zk < Zk_old
             no_improvement += 1
@@ -140,50 +149,50 @@ function solve(lmodel::DDModel)
         Zk_old = Zk
 
         # If too many iterations have happened without improvement in the lower bound, decrease alpha (step-size)
-        if no_improvement >= lmodel.solver_data.max_no_improvement
+        if no_improvement >= dd_model.solver_data.max_no_improvement
             no_improvement = 0
-            lmodel.solver_data.alpha *= delta
+            dd_model.solver_data.alpha *= delta
         end
 
-        A_eq = lmodel.link_eq_matrix
-        A_ineq = lmodel.link_ineq_matrix
+        A_eq = dd_model.link_eq_matrix
+        A_ineq = dd_model.link_ineq_matrix
 
-        x_eq = JuMP.value.(lmodel.link_eq_variables)
-        x_ineq = JuMP.value.(lmodel.link_ineq_variables)
+        x_eq = JuMP.value.(dd_model.link_eq_variables)
+        x_ineq = JuMP.value.(dd_model.link_ineq_variables)
 
         # Update residuals for multplier calculation
-        lmodel.residuals_equality = A_eq*x_eq - lmodel.b_eq
+        dd_model.residuals_equality = A_eq*x_eq - dd_model.b_eq
 
         #println(residuals_equality)
-        lmodel.residuals_inequality = A_ineq*x_ineq - lmodel.b_ineq
+        dd_model.residuals_inequality = A_ineq*x_ineq - dd_model.b_ineq
 
         # Check convergence
-        if norm(lmodel.residuals_equality) < epsilon && all(lmodel.residuals_inequality .>= 0)
-            lmodel.solution.termination = :Optimal
+        if norm(dd_model.residuals_equality) < epsilon && all(dd_model.residuals_inequality .>= 0)
+            dd_model.solution.termination = :Optimal
             return :Optimal
         end
 
         #multiplier updates
-        eq_multipliers_delta, ineq_multipliers_delta = lmodel.multiplier_update_function(lmodel)
-        lmodel.equality_multipliers += eq_multipliers_delta
-        lmodel.inequality_multipliers += ineq_multipliers_delta
-        lmodel.inequality_multipliers[lmodel.inequality_multipliers .<= 0] .= 0  #NOTE: set to zero, or just don't update?
+        eq_multipliers_delta, ineq_multipliers_delta = dd_model.multiplier_update_function(dd_model)
+        dd_model.equality_multipliers += eq_multipliers_delta
+        dd_model.inequality_multipliers += ineq_multipliers_delta
+        dd_model.inequality_multipliers[dd_model.inequality_multipliers .<= 0] .= 0  #NOTE: set to zero, or just don't update?
     end
 
-    lmodel.solution.termination= :MaxIterationsReached
+    dd_model.solution.termination= :MaxIterationsReached
     return :MaxIterationsReached
 
 end
 
 #Use current multiplier values to solve a lagrange sub-problem
-function solve_lagrange_subproblem!(lagrange_model::DDModel,subproblem::JuMP.Model)
+function solve_lagrange_subproblem!(dd_model::DDModel,subproblem::JuMP.Model)
     # Restore original objective function.  We need to remake it to update multipliers
     #IDEA: I could use parameter JuMP and make the multipliers into parameters
 
     m = subproblem
 
-    eq_multipliers = lagrange_model.equality_multipliers
-    ineq_multipliers = lagrange_model.inequality_multipliers
+    eq_multipliers = dd_model.equality_multipliers
+    ineq_multipliers = dd_model.inequality_multipliers
 
     scale = m.ext[:objective_scale]
     JuMP.set_objective_function(m,scale*m.ext[:original_objective])
@@ -252,13 +261,3 @@ function prepare_subproblem!(m::JuMP.Model)
     end
     m.ext[:original_objective] = obj
 end
-
-
-function admm_solve(graph::ModelGraph)
-end
-# data.cp_upper_bound = 1e6
-# data.cutting_plane_solver = nothing
-# data.subproblem_solver = nothing
-
-# data.upper_bound_function = nothing
-# data.multiplier_update_method = subgradient!

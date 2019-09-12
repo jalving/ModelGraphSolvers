@@ -1,13 +1,16 @@
 using Revise
 using JuMP
 using GLPK
-using AlgebraicGraphs
-using LagrangeSolver
+using ModelGraphs
+using .DualDecompositionSolver
+
+const DDSolver = DualDecompositionSolver
 
 m1 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m1, xm[i in 1:2],Bin)
 @constraint(m1, xm[1] + xm[2] <= 1)
 @objective(m1, Max, 16xm[1] + 10xm[2])
+
 
 m2 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m2, xs[i in 1:2], Bin)
@@ -33,23 +36,24 @@ n3 = add_node!(graph,m3)
 
 #link constraints between models
 @linkconstraint(graph, [i in 1:2], n1[:xm][i] == n2[:xs][i])
+
 @linkconstraint(graph, n3[:x3][1] + n1[:xm][1] + n2[:xs][1] <= 2)
 @linkconstraint(graph, n1[:xm][2] <= n3[:y][1])
 
-lmodel = LagrangeModel(graph)
-LagrangeSolver.solve(lmodel)
+dd_model = DDModel(graph)
+DDSolver.optimize!(dd_model)
 
 #print solution
 println("Dual decomposition solution: ")
 solution = Float64[]
-for subproblem in lmodel.subproblems
+for subproblem in dd_model.subproblems
     append!(solution,value.(all_variables(subproblem)))
 end
 println(solution)
 
 # #verify with full problem
 glpk = with_optimizer(GLPK.Optimizer)
-m,ref_map = create_jump_graph_model(graph)
+m,ref_map = aggregate(graph)
 optimize!(m,glpk)
 
 println()

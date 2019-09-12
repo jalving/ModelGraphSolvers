@@ -1,5 +1,17 @@
 module ModelGraphSolvers
 
-greet() = print("Hello World!")
+
+
+# using .BendersSolver
+
+# using .ADMMSolver
+
+export dual_decomposition_solve
+#export benders_solve, ADMM_solve
+
+include("DualDecompostion/DualDecompositionSolver.jl")
+using .DualDecompSolver
+
+
 
 end # module
