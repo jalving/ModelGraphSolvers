@@ -11,7 +11,7 @@ mutable struct DDSolverData
         data.max_iterations = 100
         data.epsilon = 0.001
         data.time_limit = 3600
-        data.alpha = 2.0
+        data.alpha = 2.0  #2.0
         data.delta = 0.5
         data.max_no_improvement = 10
         return data
@@ -212,7 +212,7 @@ end
 #Use current multiplier values to solve a lagrange sub-problem
 function solve_subproblem!(dd_model::DDModel,subproblem::JuMP.Model)
 
-    #IDEA: I could use parameter JuMP and make the multipliers into parameters
+    #IDEA: Use parameter JuMP and make the multipliers into parameters
     m = subproblem
 
     eq_multipliers = dd_model.equality_multipliers
@@ -225,6 +225,7 @@ function solve_subproblem!(dd_model::DDModel,subproblem::JuMP.Model)
     #Add dualized part to objective function for each linkconstraint that hits this node
     obj = JuMP.objective_function(m)
 
+    #TODO: modify multiplier term based on objective sense
     #Add equality multiplier terms
     for term in m.ext[:eq_multipliers]  #could have duplicate terms
         coeff = term[1]
@@ -350,17 +351,18 @@ function build_subproblems(graph::ModelGraph)
         for (func,set) in constraint_types
             constraint_refs = JuMP.all_constraints(graph.mastermodel, func, set)
 
-            #Don't add duplicate constraints for master variable
-            # if func == JuMP.VariableRef
-            #     var = constraint.func
-            #     if is_linked_variable(var)  #Don't add multiple copies of a linked variable constraint
-            #         continue
-            #     end
-            # end
-
-
             for constraint_ref in constraint_refs
                 constraint = JuMP.constraint_object(constraint_ref)
+
+                # #TODO: Override subproblem child variables with master variable constraints
+                # if func == JuMP.VariableRef
+                #     #if constraint.func in values(master_var_map)  #If this is a child variable
+                #         println("here")
+                #         for ref in JuMP.all_constraints(subproblem,func,set)
+                #             delete(subproblem,ref)
+                #         end
+                #     #end
+                # end
                 new_constraint = ModelGraphs._copy_constraint(constraint,ref_map)
                 new_ref = JuMP.add_constraint(subproblem,new_constraint)
                 ref_map[constraint_ref] = new_ref

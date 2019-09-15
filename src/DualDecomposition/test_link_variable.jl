@@ -10,23 +10,23 @@ DDSolver = DualDecompositionSolver
 
 m2 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m2, xs[i in 1:2])
-@variable(m2, y[i in 1:2], Bin)
-@constraint(m2, y[1] + y[2] <= 1)
-@constraint(m2, xs[1] + xs[2] + y[1] + 4y[2] <= 10)
+@variable(m2, y[i in 1:2] >= 2)
+@constraint(m2, y[1] + y[2] <= 5)
+@constraint(m2, xs[1] + xs[2] + y[1] + y[2] <= 10)
 @objective(m2, Min, xs[1] + xs[2])
 
 m3 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m3, xs[i in 1:2])
-@variable(m3, y[i in 1:2], Bin)
+@variable(m3, y[i in 1:2] >= 0)
 @constraint(m3, y[1] + y[2] <= 1)
-@constraint(m3, xs[1] + xs[2] + y[1] + 4y[2] <= 10)
-@objective(m3, Min, y[2])
+@constraint(m3, xs[1] + xs[2] + y[1] + y[2] <= 10)
+@objective(m3, Min, y[1] + y[2])
 
 ## Model Graph
 graph = ModelGraph()
 JuMP.set_optimizer(graph.mastermodel,with_optimizer(GLPK.Optimizer))
 
-@linkvariable(graph, xm[i in 1:2] >= 2, Int)
+@linkvariable(graph, xm[i in 1:2] >= 2)
 @masterconstraint(graph, xm[1] + xm[2] <= 10)
 #@objective(graph.mastermodel, Max, 16*xm[1].vref + 10*xm[2].vref)
 
@@ -38,16 +38,6 @@ for i = 1:2
     link_variables!(graph[:xm][i],n2[:xs][i])
 end
 
-# link constraints between models
-# @linkconstraint(graph, [i in 1:2], n1[:xm][i] == n2[:xs][i])
-# @linkconstraint(graph, n3[:x3][1] + n1[:xm][1] + n2[:xs][1] <= 2)
-# @linkconstraint(graph, n1[:xm][2] <= n3[:y][1])
-
-# dd_model = DDModel(graph)
-# DDSolver.optimize!(dd_model)
-#
-
-#
 # #verify with full problem
 glpk = with_optimizer(GLPK.Optimizer)
 m,ref_map = aggregate(graph)
@@ -67,8 +57,11 @@ end
 DDSolver.optimize!(dd_model)
 #print solution
 println("Dual decomposition solution: ")
+i = 1
 for subproblem in dd_model.subproblems
+    println("Subproblem $i")
     println(value.(all_variables(subproblem)))
+    global i += 1
 end
 
 

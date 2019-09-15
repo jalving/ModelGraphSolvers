@@ -13,9 +13,9 @@ function subgradient!(dd_model::DDModel)
 
     lambda_equality_delta = step*dd_model.residuals_equality  #update multipliers
     lambda_inequality_delta = step*dd_model.residuals_inequality
-    labmda_linkvar_delta = step*dd_model.residuals_linkvars
+    lambda_linkvar_delta = step*dd_model.residuals_linkvars
 
-    return lambda_equality_delta,lambda_inequality_delta,lambda_link_var_delta
+    return lambda_equality_delta,lambda_inequality_delta,lambda_linkvar_delta
 end
 
 #TODO
