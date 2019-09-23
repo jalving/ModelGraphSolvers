@@ -11,7 +11,6 @@ m1 = Model(with_optimizer(GLPK.Optimizer))
 @constraint(m1, xm[1] + xm[2] <= 1)
 @objective(m1, Max, 16xm[1] + 10xm[2])
 
-
 m2 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m2, xs[i in 1:2], Bin)
 @variable(m2, y[i in 1:2], Bin)
@@ -36,7 +35,6 @@ n3 = add_node!(graph,m3)
 
 #link constraints between models
 @linkconstraint(graph, [i in 1:2], n1[:xm][i] == n2[:xs][i])
-
 @linkconstraint(graph, n3[:x3][1] + n1[:xm][1] + n2[:xs][1] <= 2)
 @linkconstraint(graph, n1[:xm][2] <= n3[:y][1])
 
