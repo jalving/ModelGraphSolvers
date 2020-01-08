@@ -59,9 +59,12 @@ DDModel() = DDModel(DDSolverData(),DDSolution(),subgradient!,nothing,nothing,
                                 Vector{Float64}(),Vector{Float64}(),Vector{Float64}())
 
 #Dual decomposition algorithm
-function dual_decomposition_solve(mg::ModelGraph,args...;kwargs...)
+function dual_decomposition_solve(mg::ModelGraph,args...;sub_optimizer = GLPK.Optimizer,kwargs...)
     #NOTE: figure out which args to pass to dd_model
     dd_model = DDModel(mg)
+    for subproblem in dd_model.subproblems
+        JuMP.set_optimizer(subproblem,with_optimizer(sub_optimizer))
+    end
     status = solve(dd_model)
     #TODO now set solution on the model graph.  Create simple mapping of subproblem variables back to node values
     return status
@@ -152,7 +155,7 @@ function solve(dd_model::DDModel)
 
     no_improvement = 0
     for iter in 1:max_iterations
-        println("Iteration: ",iter)
+        println("Iteration: ",iter,"\t","Lower bound: ",dd_model.current_lower_bound)
         # Solve subproblems
         Zk = 0  #objective value
         for subproblem in dd_model.subproblems

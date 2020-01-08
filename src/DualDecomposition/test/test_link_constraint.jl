@@ -1,3 +1,8 @@
+# using .DualDecomposition
+using Pkg
+Pkg.activate(".")
+include("../src/DualDecomposition.jl")
+
 using Revise
 using JuMP
 using GLPK
@@ -28,3 +33,6 @@ optimize!(m,glpk)
 println()
 println("Pure glpk solution:")
 println(JuMP.value.(all_variables(m)))
+
+
+#dual_decomposition_solve(graph)

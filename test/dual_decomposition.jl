@@ -1,6 +1,7 @@
 using JuMP
 using GLPK
 using ModelGraphs
+using ModelGraphSolvers
 
 m1 = Model(with_optimizer(GLPK.Optimizer))
 
@@ -8,7 +9,7 @@ m1 = Model(with_optimizer(GLPK.Optimizer))
 @constraint(m1, xm[1] + xm[2] <= 1)
 @objective(m1, Max, 16xm[1] + 10xm[2])
 
-m2 = Model(solver=GLPKSolverMIP())
+m2 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m2, xs[i in 1:2],Bin)
 @variable(m2, y[i in 1:2], Bin)
 @constraint(m2, y[1] + y[2] <= 1)
@@ -17,17 +18,16 @@ m2 = Model(solver=GLPKSolverMIP())
 
 ## Model Graph
 graph = ModelGraph()
-heur(g) = 16
-setsolver(graph, LagrangeSolver(update_method=:subgradient,max_iterations=30,lagrangeheuristic=heur))
-n1 = add_node(graph)
-setmodel(n1,m1)
-n2 = add_node(graph)
-setmodel(n2,m2)
+
+n1 = add_node!(graph)
+set_model(n1,m1)
+n2 = add_node!(graph)
+set_model(n2,m2)
 
 ## Linking
 # m1[x] = m2[x]  ∀i ∈ {1,2}
 @linkconstraint(graph, [i in 1:2], n1[:xm][i] == n2[:xs][i])
 
-solution = solve(graph)
+dual_decomposition_solve(graph)
 
 true

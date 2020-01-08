@@ -7,8 +7,8 @@ module ModelGraphSolvers
 export dual_decomposition_solve, DDOptimizer
 #export benders_solve, ADMM_solve
 
-include("DualDecompostion/src/DualDecomposition.jl")
-using .DualDecompSolver
+include("DualDecomposition/src/DualDecomposition.jl")
+using .DualDecomposition
 
 
 
