@@ -213,9 +213,9 @@ function parallel_solve(dd_model::DDModel,workers::Vector{Int64})
     println("# of link equality constraints: $(length(dd_model.equality_multipliers))")
     println("# of link inequality constraints: $(length(dd_model.inequality_multipliers))")
 
-    println("Distributing subproblems among workers: $workers")
-    remote_subproblems,remote_mapping = distribute_suproblems(dd_model,workers)  #returns remote reference to each subproblem
+    remote_subproblems,remote_mapping = distribute_suproblems(dd_model.subproblems,workers)  #returns remote reference to each subproblem
 
+    #Need mapping between dd_model variables and variables on remote subproblems
 
     Zk_old = dd_model.current_lower_bound
     max_iterations = dd_model.solver_data.max_iterations
@@ -231,13 +231,25 @@ function parallel_solve(dd_model::DDModel,workers::Vector{Int64})
         #Send out data for subproblems
         Zkn_futures = []
         for subproblem_ref in remote_subproblems
-           worker = remote_mapping[subproblem_ref]
+           #worker = remote_mapping[subproblem_ref]
            #fetch should be fast since the worker has this reference cached locally
+           worker = subproblem_ref.id
            Zkn_future = @spawnat worker solve_subproblem!(fetch(subproblem_ref),dd_model.equality_multipliers,dd_model.inequality_multipliers,dd_model.linkvar_multipliers)
            push!(Zkn_futures,Zkn_future)
         end
         #gather results
-        Zk = sum(fetch(Zkn_futures))  #wait here to fetch all values
+        Zk = sum(fetch.(Zkn_futures))  #wait here to fetch all values
+        println("Lower Bound: ",Zk)
+
+        #Also need to fetch solutions
+        x_eq = JuMP.value.(dd_model.link_eq_variables)
+        x_ineq = JuMP.value.(dd_model.link_ineq_variables)
+        x_linkvars = JuMP.value.(dd_model.link_var_variables)
+        for subproblem in remote_subproblems
+
+        end
+
+
 
         dd_model.current_lower_bound = Zk  #Update lower bound
         # If no improvement in the lowerbound, increase the no improvement counter
@@ -256,10 +268,6 @@ function parallel_solve(dd_model::DDModel,workers::Vector{Int64})
         A_eq = dd_model.link_eq_matrix
         A_ineq = dd_model.link_ineq_matrix
         H_linkvars = dd_model.link_var_matrix
-
-        x_eq = JuMP.value.(dd_model.link_eq_variables)
-        x_ineq = JuMP.value.(dd_model.link_ineq_variables)
-        x_linkvars = JuMP.value.(dd_model.link_var_variables)
 
         # Update residuals for multplier calculation
         dd_model.residuals_equality = A_eq*x_eq - dd_model.b_eq         #Ax = b
