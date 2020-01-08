@@ -1,4 +1,4 @@
-module DualDecompositionSolver
+module ADMMSolver
 
 using ModelGraphs
 using JuMP
@@ -9,15 +9,13 @@ using SparseArrays
 using LinearAlgebra
 using Distributed
 
-export DDModel, dual_decomposition_solve, DDOptimizer
+export ADMMModel, admm_solve, ADMMOptimizer
 
 include("utils.jl")
 
 include("solution.jl")
 
-include("dual_decomp_model.jl")
-
-include("multiplier_updates.jl")
+include("admm_model.jl")
 
 include("optimizer.jl")
 

@@ -55,6 +55,7 @@ for subproblem in dd_model.subproblems
 end
 
 DDSolver.optimize!(dd_model)
+
 #print solution
 println("Dual decomposition solution: ")
 i = 1
@@ -63,10 +64,3 @@ for subproblem in dd_model.subproblems
     println(value.(all_variables(subproblem)))
     global i += 1
 end
-
-
-# link_eq_matrix,b_eq,link_eq_variables = DDSolver.prepare_link_matrix(link_eq_constraints,sub_var_map)
-# link_ineq_matrix,b_ineq,link_ineq_variables, = prepare_link_matrix(link_ineq_constraints,sub_var_map)
-# link_var_matrix,link_var_variables = prepare_link_matrix(link_variables,master_var_map)
-
-#link_var_matrix,link_var_variables,link_var_map = DDSolver.prepare_link_matrix(linkvariables)

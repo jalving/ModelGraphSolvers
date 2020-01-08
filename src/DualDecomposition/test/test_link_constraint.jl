@@ -2,9 +2,8 @@ using Revise
 using JuMP
 using GLPK
 using ModelGraphs
-using .DualDecompositionSolver
 
-const DDSolver = DualDecompositionSolver
+#using .DualDecomposition
 
 m1 = Model(with_optimizer(GLPK.Optimizer))
 @variable(m1, xm[i in 1:2],Bin)
@@ -38,8 +37,13 @@ n3 = add_node!(graph,m3)
 @linkconstraint(graph, n3[:x3][1] + n1[:xm][1] + n2[:xs][1] <= 2)
 @linkconstraint(graph, n1[:xm][2] <= n3[:y][1])
 
+
 dd_model = DDModel(graph)
-DDSolver.optimize!(dd_model)
+for sub in dd_model.subproblems
+    JuMP.set_optimizer(sub,with_optimizer(GLPK.Optimizer))
+end
+
+solve(dd_model)
 
 #print solution
 println("Dual decomposition solution: ")

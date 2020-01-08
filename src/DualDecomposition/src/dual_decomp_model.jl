@@ -18,7 +18,6 @@ mutable struct DDSolverData
     end
 end
 
-#IDEA: Create a DDModel using ModelGraph information
 mutable struct DDModel
     solver_data::DDSolverData   #solver inputs
     solution::DDSolution        #solution data
@@ -28,7 +27,7 @@ mutable struct DDModel
     upper_bound_function::Union{Nothing,Function}               #optional, can speed up convergence
     subproblem_solver::Union{Nothing,JuMP.OptimizerFactory}     #e.g. GLPK.Optimizer
 
-    subproblems::Vector{JuMP.Model}                             #we assume these are all minimization problems
+    subproblems::Vector{JuMP.AbstractModel}                     #we assume these are all minimization problems
 
     linkvar_multipliers::Vector{Float64}
     equality_multipliers::Vector{Float64}                       #link equality constraint multipliers
@@ -53,11 +52,6 @@ mutable struct DDModel
     residuals_inequality::Vector         #A_ineq*x_ineq - b_ineq
 end
 
-# NOTE: We can lift shared variables into equality constraints
-# shared_variables::Dict{JuMP.AbstractJuMPScalar,JuMP.AbstractJuMPScalar} #these get dualized into simple linkconstraints
-# shared_variable_multipliers::Vector{Float64}
-#dd_model.shared_variables = getsharedvariables(graph)  #dictionary
-
 DDModel() = DDModel(DDSolverData(),DDSolution(),subgradient!,nothing,nothing,
                                 Vector{JuMP.Model}(),
                                 Vector{Float64}(),Vector{Float64}(),Vector{Float64}(),nothing,nothing,nothing,Vector{Float64}(),Vector{Float64}(),
@@ -65,20 +59,24 @@ DDModel() = DDModel(DDSolverData(),DDSolution(),subgradient!,nothing,nothing,
                                 Vector{Float64}(),Vector{Float64}(),Vector{Float64}())
 
 #Dual decomposition algorithm
-#NOTE: This might get renamed to lagrange_solver depending how we deal with ADMM
-function dual_decomposition_solve(graph::ModelGraph,args...;kwargs...)
-
-    #NOTE: figure out which args to pass
-    dd_model = DDModel(graph)
+function dual_decomposition_solve(mg::ModelGraph,args...;kwargs...)
+    #NOTE: figure out which args to pass to dd_model
+    dd_model = DDModel(mg)
     status = solve(dd_model)
-
-    #set solution on graph
-
+    #TODO now set solution on the model graph.  Create simple mapping of subproblem variables back to node values
     return status
 end
 
-function dual_decomposition_pmap_solve(graph::ModelGraph,workers,args...;kwargs...)
+#Distributed Dual Decomposition
+function dual_decomposition_solve(graph::ModelGraph,workers,args...;kwargs...)
+    dd_model = DDModel(mg)
+    #NOTE: distribute subproblems on workers
+    status = parallel_solve(dd_model,workers)#,args...;kwargs...)
 end
+
+# IDEA
+# function DDModel(graph::RemoteModelGraph)
+# end
 
 #Populate a DDModel using a ModelGraph
 function DDModel(graph::ModelGraph) #args,kwargs
@@ -86,9 +84,9 @@ function DDModel(graph::ModelGraph) #args,kwargs
     #DDMODEL SUPPORTS
     #supports: linkconstraints
     #supports: linkvariables
-    #does not support: subgraphs (need to aggregate)
-    #does not support: interval constraints
-    #does not support: nonlinear constraints
+    #does not support: subgraphs (need to group the graph.  Subgraphs will work with Nested DD)
+    #does not yet support: interval constraints
+    #does not yet support: nonlinear constraints
 
     #TODO Automatically aggregate subgraphs
     if has_subgraphs(graph)
@@ -105,12 +103,12 @@ function DDModel(graph::ModelGraph) #args,kwargs
 
     link_eq_constraints = get_link_eq_constraints(graph)          #link equality constraints in graph
     link_ineq_constraints = get_link_ineq_constraints(graph)      #link inequality constraints in graph
-    link_variables = [var for var in getlinkvariables(graph)]     #link variables TODO: Make ModelGraphs return concrete type
+    link_variables = getlinkvariables(graph)     #link variables TODO: Make ModelGraphs return concrete type
 
     #Setup data structures
     link_eq_matrix,b_eq,link_eq_variables = prepare_link_matrix(link_eq_constraints,sub_var_map)
     link_ineq_matrix,b_ineq,link_ineq_variables, = prepare_link_matrix(link_ineq_constraints,sub_var_map)
-    link_var_matrix,link_var_variables = prepare_link_matrix(link_variables,master_var_map)                 #This is the big sparse H matrix for nonanticpitivity constraints
+    link_var_matrix,link_var_variables = prepare_link_matrix(link_variables,master_var_map)     #This is the big sparse H matrix for nonanticpitivity constraints
 
     dd_model.link_var_matrix = link_var_matrix
     dd_model.link_var_variables = link_var_variables
@@ -139,14 +137,13 @@ function DDModel(graph::ModelGraph) #args,kwargs
 end
 
 #Solve a DD Model using dual decomposition or ADMM
-function optimize!(dd_model::DDModel)
+function solve(dd_model::DDModel)
 
     println("Optimizing with Dual Decomposition:")
     println("# of subproblems: $(length(dd_model.subproblems))")
-    println("# of nonanticpitivity constraints: ")
-    println("# of link equality constraints:")
-    println("# of link inequality constraints:")
-
+    println("# of link variables:  $(length(dd_model.linkvar_multipliers))")
+    println("# of link equality constraints: $(length(dd_model.equality_multipliers))")
+    println("# of link inequality constraints: $(length(dd_model.inequality_multipliers))")
 
     Zk_old = dd_model.current_lower_bound
     max_iterations = dd_model.solver_data.max_iterations
@@ -159,7 +156,7 @@ function optimize!(dd_model::DDModel)
         # Solve subproblems
         Zk = 0  #objective value
         for subproblem in dd_model.subproblems
-           Zkn = solve_subproblem!(dd_model,subproblem)
+           Zkn = solve_subproblem!(subproblem,dd_model.equality_multipliers,dd_model.inequality_multipliers,dd_model.linkvar_multipliers)
            Zk += Zkn                       # add objective values
         end
         #steptaken = true
@@ -206,18 +203,92 @@ function optimize!(dd_model::DDModel)
 
     dd_model.solution.termination= :MaxIterationsReached
     return :MaxIterationsReached
+end
 
+function parallel_solve(dd_model::DDModel,workers::Vector{Int64})
+
+    println("Optimizing with Dual Decomposition:")
+    println("# of subproblems: $(length(dd_model.subproblems))")
+    println("# of link variables:  $(length(dd_model.linkvar_multipliers))")
+    println("# of link equality constraints: $(length(dd_model.equality_multipliers))")
+    println("# of link inequality constraints: $(length(dd_model.inequality_multipliers))")
+
+    println("Distributing subproblems among workers: $workers")
+    remote_subproblems,remote_mapping = distribute_suproblems(dd_model,workers)  #returns remote reference to each subproblem
+
+
+    Zk_old = dd_model.current_lower_bound
+    max_iterations = dd_model.solver_data.max_iterations
+    epsilon = dd_model.solver_data.epsilon
+    delta = dd_model.solver_data.delta
+
+    no_improvement = 0
+    for iter in 1:max_iterations
+        println("Iteration: ",iter)
+        # Solve subproblems
+        Zk = 0  #objective value
+
+        #Send out data for subproblems
+        Zkn_futures = []
+        for subproblem_ref in remote_subproblems
+           worker = remote_mapping[subproblem_ref]
+           #fetch should be fast since the worker has this reference cached locally
+           Zkn_future = @spawnat worker solve_subproblem!(fetch(subproblem_ref),dd_model.equality_multipliers,dd_model.inequality_multipliers,dd_model.linkvar_multipliers)
+           push!(Zkn_futures,Zkn_future)
+        end
+        #gather results
+        Zk = sum(fetch(Zkn_futures))  #wait here to fetch all values
+
+        dd_model.current_lower_bound = Zk  #Update lower bound
+        # If no improvement in the lowerbound, increase the no improvement counter
+        if Zk < Zk_old
+            no_improvement += 1
+        end
+        Zk_old = Zk
+
+        # If too many iterations have happened without improvement in the lower bound, decrease alpha (step-size)
+        if no_improvement >= dd_model.solver_data.max_no_improvement
+            no_improvement = 0
+            dd_model.solver_data.alpha *= delta
+        end
+
+        #evaluate residuals
+        A_eq = dd_model.link_eq_matrix
+        A_ineq = dd_model.link_ineq_matrix
+        H_linkvars = dd_model.link_var_matrix
+
+        x_eq = JuMP.value.(dd_model.link_eq_variables)
+        x_ineq = JuMP.value.(dd_model.link_ineq_variables)
+        x_linkvars = JuMP.value.(dd_model.link_var_variables)
+
+        # Update residuals for multplier calculation
+        dd_model.residuals_equality = A_eq*x_eq - dd_model.b_eq         #Ax = b
+        dd_model.residuals_inequality = A_ineq*x_ineq - dd_model.b_ineq #Ax <= b
+        dd_model.residuals_linkvars = H_linkvars*x_linkvars             #Hx = 0
+
+        # Check convergence
+        if norm(dd_model.residuals_equality) + norm(dd_model.residuals_linkvars) < epsilon && all(dd_model.residuals_inequality .>= 0)
+            dd_model.solution.termination = :Optimal
+            return :Optimal
+        end
+
+        #do multiplier updates
+        eq_multipliers_delta, ineq_multipliers_delta, linkvar_multipliers_delta = dd_model.multiplier_update_function(dd_model)
+        dd_model.linkvar_multipliers += linkvar_multipliers_delta
+        dd_model.equality_multipliers += eq_multipliers_delta
+        dd_model.inequality_multipliers += ineq_multipliers_delta
+        dd_model.inequality_multipliers[dd_model.inequality_multipliers .<= 0] .= 0  #NOTE: set to zero, or just don't update?
+    end
+
+    dd_model.solution.termination= :MaxIterationsReached
+    return :MaxIterationsReached
 end
 
 #Use current multiplier values to solve a lagrange sub-problem
-function solve_subproblem!(dd_model::DDModel,subproblem::JuMP.Model)
+#TODO: Pass multipliers to each subproblem
+function solve_subproblem!(subproblem::JuMP.Model,eq_multipliers::Vector,ineq_multipliers::Vector,linkvar_multipliers::Vector)
 
-    #IDEA: Use parameter JuMP and make the multipliers into parameters
     m = subproblem
-
-    eq_multipliers = dd_model.equality_multipliers
-    ineq_multipliers = dd_model.inequality_multipliers
-    linkvar_multipliers = dd_model.linkvar_multipliers
 
     scale = m.ext[:objective_scale]
     JuMP.set_objective_function(m,scale*m.ext[:original_objective])
@@ -296,34 +367,36 @@ function _prepare_ineq_multiplier_map!(link_matrix::SparseMatrixCSC{Float64,Int6
     end
 end
 
-
-
 function build_subproblems(graph::ModelGraph)
 
     linkvariables = getlinkvariables(graph)
     sub_var_map = Dict()
     master_var_map = Dict((k,[]) for k in linkvariables)
 
-
     subproblems = []
     for node in getnodes(graph)
         model = getmodel(node)
+
+
         model.ext = Dict()          #need to clear out the model.ext in order to copy
 
         subproblem = copy(model)
+
+        model.ext[:modelnode] = node
         #Attach optimizer from node
+        #set_optimizer(subproblem,JuMP.with_optimizer(node.optimizer))
+
+
 
         ref_map = ModelGraphs.AggregationMap(subproblem)
-
-        #ref_map.varmap =  Dict(zip(JuMP.all_variables(model),JuMP.all_variables(subproblem)))
         new_vars = JuMP.all_variables(subproblem)
         for var in JuMP.all_variables(model)
             index = var.index
             new_var = new_vars[index.value]
             ref_map[var] = new_vars[index.value]
-            if var in keys(node.linkvariablemap)     #Point linked_variables to master problem variables
-                push!(master_var_map[node.linkvariablemap[var]],new_vars[index.value])
-                ref_map[node.linkvariablemap[var].vref] = new_vars[index.value]
+            if var in keys(node.parent_linkvariable_map)     #Point linked_variables to master problem variables
+                push!(master_var_map[node.parent_linkvariable_map[var]],new_vars[index.value])
+                ref_map[node.parent_linkvariable_map[var].vref] = new_vars[index.value]
             end
         end
 
@@ -331,7 +404,7 @@ function build_subproblems(graph::ModelGraph)
 
         #Add extra link variables if necessary to submodels.
         for linkvariable in linkvariables
-            if !(linkvariable in values(node.linkvariablemap)) #if the child does not have a master variable
+            if !(linkvariable in values(node.parent_linkvariable_map)) #if the child does not have a master variable
                 new_var = @variable(subproblem)
                 var_name = JuMP.name(linkvariable.vref)
                 new_name = var_name
@@ -339,17 +412,16 @@ function build_subproblems(graph::ModelGraph)
                 if JuMP.start_value(linkvariable.vref) != nothing
                     JuMP.set_start_value(new_x,JuMP.start_value(linkvariable.vref))
                 end
-                # ref_map[new_var] = linkvariable.vref
                 ref_map[linkvariable.vref] = new_var
             else
 
             end
         end
 
-
-        constraint_types = JuMP.list_of_constraint_types(graph.mastermodel)
+        mastermodel = getmodel(graph.masternode)
+        constraint_types = JuMP.list_of_constraint_types(mastermodel)
         for (func,set) in constraint_types
-            constraint_refs = JuMP.all_constraints(graph.mastermodel, func, set)
+            constraint_refs = JuMP.all_constraints(mastermodel, func, set)
 
             for constraint_ref in constraint_refs
                 constraint = JuMP.constraint_object(constraint_ref)
@@ -381,10 +453,7 @@ function build_subproblems(graph::ModelGraph)
 
         subproblem.ext[:original_objective] = obj
         push!(subproblems,subproblem)
-
         merge!(sub_var_map,ref_map.varmap)
-
-
     end
     return subproblems, sub_var_map, master_var_map
 end

@@ -110,7 +110,7 @@ function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Floa
     end
 end
 
-function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Float64,JuMP.VariableRef},MOI.LessThan{Float64}},row::Integer,I::Vector,J::Vector,V::Vector,b::Vector,link_vars::Vector,link_map::Dict)
+function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Float64,JuMP.VariableRef},MOI.LessThan{Float64}},row::Integer,I::Vector,J::Vector,V::Vector,b::Vector,link_vars::Vector,link_map::Dict,var_map::Dict)
     push!(b,constraint.set.upper)
     for (var,coeff) in constraint.func.terms
         #find a new link variable
@@ -128,7 +128,7 @@ function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Floa
     end
 end
 
-function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Float64,JuMP.VariableRef},MOI.GreaterThan{Float64}},row::Integer,I::Vector,J::Vector,V::Vector,b::Vector,link_vars::Vector,link_map::Dict)
+function _unpack_constraint!(constraint::LinkConstraint{JuMP.GenericAffExpr{Float64,JuMP.VariableRef},MOI.GreaterThan{Float64}},row::Integer,I::Vector,J::Vector,V::Vector,b::Vector,link_vars::Vector,link_map::Dict,var_map::Dict)
     push!(b,-1*constraint.set.lower)
     for (var,coeff) in constraint.func.terms
         #find a new link variable
